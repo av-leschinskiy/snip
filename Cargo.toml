@@ -1,0 +1,15 @@
+[package]
+name = "snip"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gtk4 = { version = "0.9", features = ["v4_16"] }
+libadwaita = { version = "0.7", features = ["v1_6"] }
+ashpd = { version = "0.11", features = ["gtk4"] }
+cairo-rs = { version = "0.20", features = ["png"] }
+clap = { version = "4", features = ["derive"] }
+chrono = "0.4"
+dirs = "6"
+gdk4 = "0.9"
+glib = "0.20"
