@@ -1,4 +1,5 @@
 mod capture;
+mod editor;
 mod tools;
 mod utils;
 
@@ -31,9 +32,11 @@ fn main() {
     match cli.command {
         None => {
             app.connect_activate(|app| {
-                capture::start_capture(app, |path| {
-                    println!("Screenshot saved to: {}", path.display());
-                    // TODO: открыть редактор (Task 5)
+                capture::start_capture(app, {
+                    let app = app.clone();
+                    move |path| {
+                        editor::open_editor(&app, path);
+                    }
                 });
             });
         }
@@ -43,9 +46,8 @@ fn main() {
                 eprintln!("File not found: {}", path.display());
                 std::process::exit(1);
             }
-            app.connect_activate(move |_app| {
-                println!("editor mode: {}", path.display());
-                // TODO: открыть редактор (Task 5)
+            app.connect_activate(move |app| {
+                editor::open_editor(app, path.clone());
             });
         }
     }
