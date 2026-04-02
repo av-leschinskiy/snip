@@ -15,6 +15,7 @@ struct EditorState {
     image_surface: cairo::ImageSurface,
     file_path: PathBuf,
     annotations: Vec<Stroke>,
+    redo_stack: Vec<Stroke>,
     brush: BrushTool,
 }
 
@@ -28,6 +29,7 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
         image_surface: surface,
         file_path: path.clone(),
         annotations: Vec::new(),
+        redo_stack: Vec::new(),
         brush: BrushTool::new(),
     }));
 
@@ -46,6 +48,12 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
         .active(true)
         .build();
     header.pack_start(&brush_btn);
+
+    // Undo/Redo кнопки
+    let undo_btn = gtk::Button::builder().icon_name("edit-undo-symbolic").tooltip_text("Отменить (Ctrl+Z)").build();
+    let redo_btn = gtk::Button::builder().icon_name("edit-redo-symbolic").tooltip_text("Повторить (Ctrl+Shift+Z)").build();
+    header.pack_start(&undo_btn);
+    header.pack_start(&redo_btn);
 
     let copy_btn = gtk::Button::builder().label("Копировать").build();
     let path_btn = gtk::Button::builder().label("Путь").build();
@@ -114,6 +122,7 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
         press_gesture.connect_released(move |_g, _n, _x, _y| {
             let mut st = state.borrow_mut();
             if let Some(stroke) = st.brush.release() {
+                st.redo_stack.clear(); // новое действие сбрасывает redo
                 st.annotations.push(stroke);
             }
             drop(st);
@@ -134,6 +143,70 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
 
     drawing_area.add_controller(press_gesture);
     drawing_area.add_controller(motion);
+
+    // === Undo button ===
+    {
+        let state = state.clone();
+        let da = drawing_area.clone();
+        undo_btn.connect_clicked(move |_| {
+            let mut st = state.borrow_mut();
+            if let Some(stroke) = st.annotations.pop() {
+                st.redo_stack.push(stroke);
+            }
+            drop(st);
+            da.queue_draw();
+        });
+    }
+
+    // === Redo button ===
+    {
+        let state = state.clone();
+        let da = drawing_area.clone();
+        redo_btn.connect_clicked(move |_| {
+            let mut st = state.borrow_mut();
+            if let Some(stroke) = st.redo_stack.pop() {
+                st.annotations.push(stroke);
+            }
+            drop(st);
+            da.queue_draw();
+        });
+    }
+
+    // === Keyboard shortcuts: Ctrl+Z (undo), Ctrl+Shift+Z (redo) ===
+    let key_controller = gtk::EventControllerKey::new();
+    {
+        let state = state.clone();
+        let da = drawing_area.clone();
+        key_controller.connect_key_pressed(move |_ctrl, key, _code, mods| {
+            let ctrl = mods.contains(gdk::ModifierType::CONTROL_MASK);
+            let shift = mods.contains(gdk::ModifierType::SHIFT_MASK);
+
+            if ctrl && key == gdk::Key::z && !shift {
+                // Undo
+                let mut st = state.borrow_mut();
+                if let Some(stroke) = st.annotations.pop() {
+                    st.redo_stack.push(stroke);
+                }
+                drop(st);
+                da.queue_draw();
+                return glib::Propagation::Stop;
+            }
+
+            if ctrl && (key == gdk::Key::Z || (key == gdk::Key::z && shift)) {
+                // Redo
+                let mut st = state.borrow_mut();
+                if let Some(stroke) = st.redo_stack.pop() {
+                    st.annotations.push(stroke);
+                }
+                drop(st);
+                da.queue_draw();
+                return glib::Propagation::Stop;
+            }
+
+            glib::Propagation::Proceed
+        });
+    }
+    window.add_controller(key_controller);
 
     // === Bottom bar ===
     let bottom_bar = build_bottom_bar(state.clone(), drawing_area.clone());

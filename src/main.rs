@@ -25,6 +25,15 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
 
+    // Tokio reactor нужен для zbus/ashpd (D-Bus I/O).
+    // GLib executor поллит futures, но I/O операции zbus используют Tokio reactor.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .expect("failed to create tokio runtime");
+    let _guard = rt.enter();
+
     let app = libadwaita::Application::builder()
         .application_id("dev.snip.app")
         .build();

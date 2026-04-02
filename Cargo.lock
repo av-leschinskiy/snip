@@ -1433,9 +1433,12 @@ dependencies = [
  "clap",
  "dirs",
  "gdk4",
+ "gio",
  "glib",
  "gtk4",
  "libadwaita",
+ "tokio",
+ "url",
 ]
 
 [[package]]
