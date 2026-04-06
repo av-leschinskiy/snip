@@ -22,23 +22,6 @@ pub fn new_screenshot_path() -> std::io::Result<PathBuf> {
     Ok(dir.join(screenshot_filename()))
 }
 
-/// Обрезает cairo::ImageSurface по прямоугольнику (x, y, w, h).
-/// Возвращает новый ImageSurface с вырезанной областью.
-pub fn crop_surface(
-    source: &cairo::ImageSurface,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-) -> Result<cairo::ImageSurface, cairo::Error> {
-    let cropped = cairo::ImageSurface::create(cairo::Format::ARgb32, width, height)?;
-    let cr = cairo::Context::new(&cropped)?;
-    cr.set_source_surface(source, -x as f64, -y as f64)?;
-    cr.paint()?;
-    drop(cr);
-    Ok(cropped)
-}
-
 /// Сохраняет cairo::ImageSurface в PNG-файл.
 pub fn save_surface_as_png(
     surface: &cairo::ImageSurface,
@@ -65,14 +48,6 @@ mod tests {
         assert!(name.starts_with("screenshot-"));
         assert!(name.ends_with(".png"));
         assert_eq!(name.len(), "screenshot-2026-04-02_14-35-22.png".len());
-    }
-
-    #[test]
-    fn test_crop_surface() {
-        let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 100, 100).unwrap();
-        let cropped = crop_surface(&surface, 10, 10, 50, 50).unwrap();
-        assert_eq!(cropped.width(), 50);
-        assert_eq!(cropped.height(), 50);
     }
 
     #[test]

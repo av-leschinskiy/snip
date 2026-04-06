@@ -11,7 +11,6 @@ pub fn start_capture(app: &libadwaita::Application, on_done: impl Fn(PathBuf) + 
     glib::spawn_future_local(async move {
         match take_portal_screenshot().await {
             Ok(uri) => {
-                drop(hold_guard);
                 let source_path = uri_to_path(&uri);
 
                 // Копируем в нашу папку с нашим форматом имени
@@ -25,6 +24,8 @@ pub fn start_capture(app: &libadwaita::Application, on_done: impl Fn(PathBuf) + 
                     }
                     Err(e) => eprintln!("Failed to create screenshot path: {e}"),
                 }
+                // Дропаем hold ПОСЛЕ on_done — окно редактора уже создано и держит app
+                drop(hold_guard);
             }
             Err(e) => {
                 eprintln!("Portal screenshot cancelled or failed: {e}");

@@ -28,9 +28,6 @@ impl Stroke {
         self.points.push((x, y));
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.points.is_empty()
-    }
 }
 
 impl Annotation for Stroke {

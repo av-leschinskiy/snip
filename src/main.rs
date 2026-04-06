@@ -40,7 +40,12 @@ fn main() {
 
     match cli.command {
         None => {
-            app.connect_activate(|app| {
+            let activated = std::cell::Cell::new(false);
+            app.connect_activate(move |app| {
+                if activated.get() {
+                    return;
+                }
+                activated.set(true);
                 capture::start_capture(app, {
                     let app = app.clone();
                     move |path| {
