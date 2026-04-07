@@ -1,4 +1,5 @@
 pub mod brush;
+pub mod rect;
 
 use gdk4 as gdk;
 
@@ -52,5 +53,47 @@ impl Annotation for Stroke {
             cr.line_to(x, y);
         }
         let _ = cr.stroke();
+    }
+}
+
+/// Прямоугольная рамка — контур без заливки.
+#[derive(Clone, Debug)]
+pub struct RectAnnotation {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub color: gdk::RGBA,
+    pub line_width: f64,
+}
+
+impl Annotation for RectAnnotation {
+    fn draw(&self, cr: &cairo::Context) {
+        cr.set_source_rgba(
+            self.color.red() as f64,
+            self.color.green() as f64,
+            self.color.blue() as f64,
+            self.color.alpha() as f64,
+        );
+        cr.set_line_width(self.line_width);
+        cr.set_line_join(cairo::LineJoin::Miter);
+        cr.rectangle(self.x, self.y, self.width, self.height);
+        let _ = cr.stroke();
+    }
+}
+
+/// Полиморфная аннотация — объединяет все типы.
+#[derive(Clone, Debug)]
+pub enum AnnotationItem {
+    Stroke(Stroke),
+    Rect(RectAnnotation),
+}
+
+impl Annotation for AnnotationItem {
+    fn draw(&self, cr: &cairo::Context) {
+        match self {
+            AnnotationItem::Stroke(s) => s.draw(cr),
+            AnnotationItem::Rect(r) => r.draw(cr),
+        }
     }
 }
