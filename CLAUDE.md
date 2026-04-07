@@ -27,9 +27,9 @@ cargo fmt                # форматирование
 
 ```
 main.rs          CLI (clap) + tokio runtime + libadwaita::Application
-capture.rs       Portal screenshot (ashpd) → overlay → crop → save → callback
+capture.rs       Portal screenshot (ashpd) → копирование в ~/Pictures/Screenshots → callback
 editor.rs        GTK4 окно: canvas, brush, undo/redo, clipboard, save
-utils.rs         Пути (XDG), crop_surface, save_surface_as_png
+utils.rs         Пути (XDG screenshots_dir/new_screenshot_path), save_surface_as_png
 tools/mod.rs     trait Annotation { fn draw(&self, cr) } + struct Stroke
 tools/brush.rs   BrushTool — state machine: press → motion → release
 ```

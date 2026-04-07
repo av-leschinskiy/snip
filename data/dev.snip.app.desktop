@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Snip
+Comment=Screenshot and annotation tool
+Exec=snip
+Icon=dev.snip.app
+Terminal=false
+Type=Application
+Categories=Utility;Graphics;
+Keywords=screenshot;snip;annotation;

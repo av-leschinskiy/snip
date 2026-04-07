@@ -12,8 +12,8 @@ pub struct BrushTool {
 impl BrushTool {
     pub fn new() -> Self {
         Self {
-            color: gdk::RGBA::new(1.0, 0.0, 0.0, 1.0),
-            width: 3.0,
+            color: gdk::RGBA::new(1.0, 0.2, 0.2, 1.0),
+            width: 2.0,
             current_stroke: None,
         }
     }

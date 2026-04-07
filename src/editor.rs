@@ -25,6 +25,9 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
         cairo::ImageSurface::create_from_png(&mut file).expect("cannot decode PNG")
     };
 
+    let img_w = surface.width();
+    let img_h = surface.height();
+
     let state = Rc::new(RefCell::new(EditorState {
         image_surface: surface,
         file_path: path.clone(),
@@ -36,33 +39,20 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
     let window = libadwaita::ApplicationWindow::builder()
         .application(app)
         .title("snip")
-        .default_width(800)
-        .default_height(600)
+        .default_width(img_w)
+        .default_height(img_h + 90) // запас на headerbar + toolbar
         .build();
 
-    // === HeaderBar ===
+    // === HeaderBar (минимальный — только title + close) ===
     let header = libadwaita::HeaderBar::new();
 
-    let brush_btn = gtk::ToggleButton::builder()
-        .label("Кисть")
-        .active(true)
-        .build();
-    header.pack_start(&brush_btn);
-
-    // Undo/Redo кнопки
+    // Кнопки создаём здесь, компонуем в bottom bar
     let undo_btn = gtk::Button::builder().icon_name("edit-undo-symbolic").tooltip_text("Отменить (Ctrl+Z)").build();
     let redo_btn = gtk::Button::builder().icon_name("edit-redo-symbolic").tooltip_text("Повторить (Ctrl+Shift+Z)").build();
-    header.pack_start(&undo_btn);
-    header.pack_start(&redo_btn);
-
     let copy_btn = gtk::Button::builder().label("Копировать").build();
     let path_btn = gtk::Button::builder().label("Путь").build();
     let save_btn = gtk::Button::builder().label("Сохранить").build();
     save_btn.add_css_class("suggested-action");
-
-    header.pack_end(&save_btn);
-    header.pack_end(&path_btn);
-    header.pack_end(&copy_btn);
 
     // === Canvas ===
     let drawing_area = gtk::DrawingArea::new();
@@ -209,7 +199,15 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
     window.add_controller(key_controller);
 
     // === Bottom bar ===
-    let bottom_bar = build_bottom_bar(state.clone(), drawing_area.clone());
+    let bottom_bar = build_bottom_bar(
+        state.clone(),
+        drawing_area.clone(),
+        &undo_btn,
+        &redo_btn,
+        &copy_btn,
+        &path_btn,
+        &save_btn,
+    );
 
     // === "Копировать" button ===
     {
@@ -301,20 +299,39 @@ fn surface_to_texture(surface: &cairo::ImageSurface) -> gdk::Texture {
     gdk::Texture::from_bytes(&bytes).expect("Texture from PNG failed")
 }
 
-fn build_bottom_bar(state: Rc<RefCell<EditorState>>, _da: gtk::DrawingArea) -> gtk::Box {
+fn build_bottom_bar(
+    state: Rc<RefCell<EditorState>>,
+    _da: gtk::DrawingArea,
+    undo_btn: &gtk::Button,
+    redo_btn: &gtk::Button,
+    copy_btn: &gtk::Button,
+    path_btn: &gtk::Button,
+    save_btn: &gtk::Button,
+) -> gtk::Box {
     let bar = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
-        .spacing(12)
+        .spacing(8)
         .margin_start(12)
         .margin_end(12)
         .margin_top(8)
         .margin_bottom(8)
         .build();
 
-    let color_label = gtk::Label::new(Some("Цвет:"));
-    color_label.add_css_class("dim-label");
-    bar.append(&color_label);
+    let display = gdk::Display::default().expect("cannot get default display");
 
+    // CSS для цветовых кнопок: белая обводка при активном состоянии
+    let global_css = gtk::CssProvider::new();
+    global_css.load_from_string(
+        "button.snip-color:checked { outline: 2px solid white; outline-offset: 2px; }
+         button.snip-color { outline: none; }",
+    );
+    gtk::style_context_add_provider_for_display(
+        &display,
+        &global_css,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+
+    // --- Цвета ---
     let colors: Vec<(&str, gdk::RGBA)> = vec![
         ("red", gdk::RGBA::new(1.0, 0.2, 0.2, 1.0)),
         ("green", gdk::RGBA::new(0.2, 0.8, 0.2, 1.0)),
@@ -323,16 +340,22 @@ fn build_bottom_bar(state: Rc<RefCell<EditorState>>, _da: gtk::DrawingArea) -> g
         ("pink", gdk::RGBA::new(1.0, 0.4, 1.0, 1.0)),
     ];
 
-    // Получаем display для добавления CSS-провайдеров
-    let display = gdk::Display::default().expect("cannot get default display");
+    let mut color_group: Option<gtk::ToggleButton> = None;
 
-    for (name, rgba) in &colors {
-        let btn = gtk::Button::new();
+    for (i, (name, rgba)) in colors.iter().enumerate() {
+        let btn = gtk::ToggleButton::new();
         btn.set_size_request(28, 28);
-        // Уникальный CSS-класс для каждой кнопки цвета
+        btn.add_css_class("snip-color");
+        if i == 0 {
+            btn.set_active(true);
+            color_group = Some(btn.clone());
+        } else if let Some(ref group) = color_group {
+            btn.set_group(Some(group));
+        }
+
         let css_class = format!("snip-color-{}", name);
         let css = format!(
-            "button.{} {{ background: rgba({},{},{},{}); border-radius: 50%; min-width: 28px; min-height: 28px; padding: 0; }}",
+            "button.{} {{ background: rgba({},{},{},{}); border-radius: 4px; min-width: 28px; min-height: 28px; padding: 0; }}",
             css_class,
             (rgba.red() * 255.0) as u8,
             (rgba.green() * 255.0) as u8,
@@ -356,32 +379,21 @@ fn build_bottom_bar(state: Rc<RefCell<EditorState>>, _da: gtk::DrawingArea) -> g
         bar.append(&btn);
     }
 
-    // Separator
-    let sep = gtk::Separator::new(gtk::Orientation::Vertical);
-    bar.append(&sep);
+    bar.append(&gtk::Separator::new(gtk::Orientation::Vertical));
 
-    // Thickness label
-    let width_label = gtk::Label::new(Some("Толщина:"));
-    width_label.add_css_class("dim-label");
-    bar.append(&width_label);
+    // --- Толщина ---
+    let widths: Vec<f64> = vec![2.0, 4.0, 8.0];
+    let mut width_group: Option<gtk::ToggleButton> = None;
 
-    let widths: Vec<(f64, i32, usize)> = vec![(2.0, 10, 0), (4.0, 16, 1), (8.0, 22, 2)];
-    for (line_width, btn_size, idx) in &widths {
-        let btn = gtk::Button::new();
-        btn.set_size_request(*btn_size, *btn_size);
-        let css_class = format!("snip-thickness-{}", idx);
-        let css = format!(
-            "button.{} {{ border-radius: 50%; min-width: {}px; min-height: {}px; padding: 0; }}",
-            css_class, btn_size, btn_size,
-        );
-        let provider = gtk::CssProvider::new();
-        provider.load_from_string(&css);
-        gtk::style_context_add_provider_for_display(
-            &display,
-            &provider,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-        btn.add_css_class(&css_class);
+    for (i, line_width) in widths.iter().enumerate() {
+        let label = format!("{}px", *line_width as i32);
+        let btn = gtk::ToggleButton::with_label(&label);
+        if i == 0 {
+            btn.set_active(true);
+            width_group = Some(btn.clone());
+        } else if let Some(ref group) = width_group {
+            btn.set_group(Some(group));
+        }
 
         let w = *line_width;
         let state = state.clone();
@@ -390,6 +402,22 @@ fn build_bottom_bar(state: Rc<RefCell<EditorState>>, _da: gtk::DrawingArea) -> g
         });
         bar.append(&btn);
     }
+
+    bar.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+
+    // --- Undo / Redo ---
+    bar.append(undo_btn);
+    bar.append(redo_btn);
+
+    // Spacer — прижимает действия с файлом вправо
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    bar.append(&spacer);
+
+    // --- Действия с файлом ---
+    bar.append(copy_btn);
+    bar.append(path_btn);
+    bar.append(save_btn);
 
     bar
 }

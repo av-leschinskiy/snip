@@ -36,6 +36,7 @@ fn main() {
 
     let app = libadwaita::Application::builder()
         .application_id("dev.snip.app")
+        .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
 
     match cli.command {
