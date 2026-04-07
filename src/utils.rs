@@ -4,14 +4,15 @@ use std::path::PathBuf;
 /// Возвращает директорию для снипов: XDG_PICTURES_DIR/Screenshots/snip/
 pub fn screenshots_dir() -> PathBuf {
     let pictures = dirs::picture_dir().unwrap_or_else(|| {
-        let home = dirs::home_dir().expect("no home directory");
-        home.join("Pictures")
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/tmp"))
+            .join("Pictures")
     });
     pictures.join("Screenshots").join("snip")
 }
 
-/// Генерирует имя файла: screenshot-YYYY-MM-DD_HH-MM-SS.png
-pub fn screenshot_filename() -> String {
+/// Генерирует имя файла: snip-shot-YYYY-MM-DD_HH-MM-SS.png
+fn screenshot_filename() -> String {
     let now = chrono::Local::now();
     now.format("snip-shot-%Y-%m-%d_%H-%M-%S.png").to_string()
 }
@@ -43,7 +44,7 @@ impl Default for BrushConfig {
 
 fn config_path() -> PathBuf {
     let config_dir = dirs::config_dir()
-        .unwrap_or_else(|| dirs::home_dir().expect("no home directory").join(".config"));
+        .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp")).join(".config"));
     config_dir.join("snip").join("config.json")
 }
 

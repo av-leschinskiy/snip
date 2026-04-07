@@ -5,8 +5,8 @@ use crate::utils;
 
 /// Состояние инструмента "Кисть".
 pub struct BrushTool {
-    pub color: gdk::RGBA,
-    pub width: f64,
+    color: gdk::RGBA,
+    width: f64,
     current_stroke: Option<Stroke>,
 }
 
@@ -23,6 +23,22 @@ impl BrushTool {
             width: config.width,
             current_stroke: None,
         }
+    }
+
+    pub fn color(&self) -> gdk::RGBA {
+        self.color
+    }
+
+    pub fn set_color(&mut self, color: gdk::RGBA) {
+        self.color = color;
+    }
+
+    pub fn width(&self) -> f64 {
+        self.width
+    }
+
+    pub fn set_width(&mut self, width: f64) {
+        self.width = width;
     }
 
     pub fn press(&mut self, x: f64, y: f64) {
@@ -74,8 +90,8 @@ mod tests {
     #[test]
     fn test_brush_uses_configured_color_and_width() {
         let mut brush = BrushTool::new();
-        brush.color = gdk::RGBA::new(0.0, 1.0, 0.0, 1.0);
-        brush.width = 5.0;
+        brush.set_color(gdk::RGBA::new(0.0, 1.0, 0.0, 1.0));
+        brush.set_width(5.0);
         brush.press(0.0, 0.0);
         brush.motion(10.0, 10.0);
         let stroke = brush.release().unwrap();

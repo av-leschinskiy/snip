@@ -8,6 +8,8 @@ pub struct RectTool {
     current: Option<(f64, f64)>,
 }
 
+const MIN_RECT_SIZE: f64 = 2.0;
+
 impl RectTool {
     pub fn new() -> Self {
         Self {
@@ -27,9 +29,8 @@ impl RectTool {
         }
     }
 
-    pub fn release(&mut self, color: gdk::RGBA, line_width: f64) -> Option<RectAnnotation> {
-        let start = self.start.take()?;
-        let end = self.current.take()?;
+    /// Нормализация координат: start/end → (x, y, w, h) с положительными размерами.
+    fn normalize(start: (f64, f64), end: (f64, f64)) -> (f64, f64, f64, f64) {
         let (x, w) = if end.0 >= start.0 {
             (start.0, end.0 - start.0)
         } else {
@@ -40,42 +41,26 @@ impl RectTool {
         } else {
             (end.1, start.1 - end.1)
         };
+        (x, y, w, h)
+    }
+
+    pub fn release(&mut self, color: gdk::RGBA, line_width: f64) -> Option<RectAnnotation> {
+        let start = self.start.take()?;
+        let end = self.current.take()?;
+        let (x, y, w, h) = Self::normalize(start, end);
         // Игнорировать слишком маленькие прямоугольники (клик без drag)
-        if w < 2.0 && h < 2.0 {
+        if w < MIN_RECT_SIZE && h < MIN_RECT_SIZE {
             return None;
         }
-        Some(RectAnnotation {
-            x,
-            y,
-            width: w,
-            height: h,
-            color,
-            line_width,
-        })
+        Some(RectAnnotation { x, y, width: w, height: h, color, line_width })
     }
 
     /// Preview текущего прямоугольника для отрисовки во время drag.
     pub fn current_rect(&self, color: gdk::RGBA, line_width: f64) -> Option<RectAnnotation> {
         let start = self.start?;
         let end = self.current?;
-        let (x, w) = if end.0 >= start.0 {
-            (start.0, end.0 - start.0)
-        } else {
-            (end.0, start.0 - end.0)
-        };
-        let (y, h) = if end.1 >= start.1 {
-            (start.1, end.1 - start.1)
-        } else {
-            (end.1, start.1 - end.1)
-        };
-        Some(RectAnnotation {
-            x,
-            y,
-            width: w,
-            height: h,
-            color,
-            line_width,
-        })
+        let (x, y, w, h) = Self::normalize(start, end);
+        Some(RectAnnotation { x, y, width: w, height: h, color, line_width })
     }
 }
 
