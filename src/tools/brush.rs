@@ -1,6 +1,7 @@
 use gdk4 as gdk;
 
 use super::Stroke;
+use crate::utils;
 
 /// Состояние инструмента "Кисть".
 pub struct BrushTool {
@@ -11,9 +12,15 @@ pub struct BrushTool {
 
 impl BrushTool {
     pub fn new() -> Self {
+        let config = utils::load_brush_config();
         Self {
-            color: gdk::RGBA::new(1.0, 0.2, 0.2, 1.0),
-            width: 2.0,
+            color: gdk::RGBA::new(
+                config.color[0],
+                config.color[1],
+                config.color[2],
+                config.color[3],
+            ),
+            width: config.width,
             current_stroke: None,
         }
     }

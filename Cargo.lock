@@ -1437,6 +1437,8 @@ dependencies = [
  "glib",
  "gtk4",
  "libadwaita",
+ "serde",
+ "serde_json",
  "tokio",
  "url",
 ]
