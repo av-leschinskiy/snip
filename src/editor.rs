@@ -7,16 +7,25 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use crate::tools::{Annotation, Stroke};
+use crate::tools::{Annotation, AnnotationItem};
 use crate::tools::brush::BrushTool;
+use crate::tools::rect::RectTool;
 use crate::utils;
+
+#[derive(Clone, Copy, PartialEq)]
+enum ActiveTool {
+    Brush,
+    Rect,
+}
 
 struct EditorState {
     image_surface: cairo::ImageSurface,
     file_path: PathBuf,
-    annotations: Vec<Stroke>,
-    redo_stack: Vec<Stroke>,
+    annotations: Vec<AnnotationItem>,
+    redo_stack: Vec<AnnotationItem>,
+    active_tool: ActiveTool,
     brush: BrushTool,
+    rect: RectTool,
 }
 
 pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
@@ -33,12 +42,18 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
         file_path: path.clone(),
         annotations: Vec::new(),
         redo_stack: Vec::new(),
+        active_tool: ActiveTool::Brush,
         brush: BrushTool::new(),
+        rect: RectTool::new(),
     }));
+
+    let filename = path.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "snip".to_string());
 
     let window = libadwaita::ApplicationWindow::builder()
         .application(app)
-        .title("snip")
+        .title(&filename)
         .default_width(img_w)
         .default_height(img_h + 90) // запас на headerbar + toolbar
         .build();
@@ -47,12 +62,10 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
     let header = libadwaita::HeaderBar::new();
 
     // Кнопки создаём здесь, компонуем в bottom bar
-    let undo_btn = gtk::Button::builder().icon_name("edit-undo-symbolic").tooltip_text("Отменить (Ctrl+Z)").build();
-    let redo_btn = gtk::Button::builder().icon_name("edit-redo-symbolic").tooltip_text("Повторить (Ctrl+Shift+Z)").build();
+    let undo_btn = gtk::Button::builder().icon_name("edit-undo-symbolic").tooltip_text("Отменить (Ctrl+Z)").sensitive(false).build();
+    let redo_btn = gtk::Button::builder().icon_name("edit-redo-symbolic").tooltip_text("Повторить (Ctrl+Shift+Z)").sensitive(false).build();
     let copy_btn = gtk::Button::builder().label("Копировать").build();
     let path_btn = gtk::Button::builder().label("Путь").build();
-    let save_btn = gtk::Button::builder().label("Сохранить").build();
-    save_btn.add_css_class("suggested-action");
 
     // === Canvas ===
     let drawing_area = gtk::DrawingArea::new();
@@ -84,8 +97,12 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
                 annotation.draw(cr);
             }
 
+            // Preview текущего инструмента
             if let Some(stroke) = state.brush.current_stroke() {
                 stroke.draw(cr);
+            }
+            if let Some(rect) = state.rect.current_rect(state.brush.color, state.brush.width) {
+                rect.draw(cr);
             }
 
             cr.restore().ok();
@@ -101,7 +118,12 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
         let da = drawing_area.clone();
         press_gesture.connect_pressed(move |_g, _n, x, y| {
             let (ix, iy) = screen_to_image(&state.borrow(), &da, x, y);
-            state.borrow_mut().brush.press(ix, iy);
+            let mut st = state.borrow_mut();
+            match st.active_tool {
+                ActiveTool::Brush => st.brush.press(ix, iy),
+                ActiveTool::Rect => st.rect.press(ix, iy),
+            }
+            drop(st);
             da.queue_draw();
         });
     }
@@ -109,13 +131,33 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
     {
         let state = state.clone();
         let da = drawing_area.clone();
+        let undo_btn = undo_btn.clone();
+        let redo_btn = redo_btn.clone();
+        let window = window.clone();
+        let filename = filename.clone();
         press_gesture.connect_released(move |_g, _n, _x, _y| {
             let mut st = state.borrow_mut();
-            if let Some(stroke) = st.brush.release() {
-                st.redo_stack.clear(); // новое действие сбрасывает redo
-                st.annotations.push(stroke);
+            match st.active_tool {
+                ActiveTool::Brush => {
+                    if let Some(stroke) = st.brush.release() {
+                        st.redo_stack.clear();
+                        st.annotations.push(AnnotationItem::Stroke(stroke));
+                    }
+                }
+                ActiveTool::Rect => {
+                    let color = st.brush.color;
+                    let width = st.brush.width;
+                    if let Some(rect) = st.rect.release(color, width) {
+                        st.redo_stack.clear();
+                        st.annotations.push(AnnotationItem::Rect(rect));
+                    }
+                }
             }
+            let has_changes = !st.annotations.is_empty();
+            undo_btn.set_sensitive(has_changes);
+            redo_btn.set_sensitive(!st.redo_stack.is_empty());
             drop(st);
+            update_title(&window, &filename, has_changes);
             da.queue_draw();
         });
     }
@@ -126,7 +168,12 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
         let da = drawing_area.clone();
         motion.connect_motion(move |_ctrl, x, y| {
             let (ix, iy) = screen_to_image(&state.borrow(), &da, x, y);
-            state.borrow_mut().brush.motion(ix, iy);
+            let mut st = state.borrow_mut();
+            match st.active_tool {
+                ActiveTool::Brush => st.brush.motion(ix, iy),
+                ActiveTool::Rect => st.rect.motion(ix, iy),
+            }
+            drop(st);
             da.queue_draw();
         });
     }
@@ -138,12 +185,20 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
     {
         let state = state.clone();
         let da = drawing_area.clone();
+        let undo_btn2 = undo_btn.clone();
+        let redo_btn2 = redo_btn.clone();
+        let window = window.clone();
+        let filename = filename.clone();
         undo_btn.connect_clicked(move |_| {
             let mut st = state.borrow_mut();
             if let Some(stroke) = st.annotations.pop() {
                 st.redo_stack.push(stroke);
             }
+            let has_changes = !st.annotations.is_empty();
+            undo_btn2.set_sensitive(has_changes);
+            redo_btn2.set_sensitive(!st.redo_stack.is_empty());
             drop(st);
+            update_title(&window, &filename, has_changes);
             da.queue_draw();
         });
     }
@@ -152,12 +207,20 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
     {
         let state = state.clone();
         let da = drawing_area.clone();
+        let undo_btn2 = undo_btn.clone();
+        let redo_btn2 = redo_btn.clone();
+        let window = window.clone();
+        let filename = filename.clone();
         redo_btn.connect_clicked(move |_| {
             let mut st = state.borrow_mut();
             if let Some(stroke) = st.redo_stack.pop() {
                 st.annotations.push(stroke);
             }
+            let has_changes = !st.annotations.is_empty();
+            undo_btn2.set_sensitive(has_changes);
+            redo_btn2.set_sensitive(!st.redo_stack.is_empty());
             drop(st);
+            update_title(&window, &filename, has_changes);
             da.queue_draw();
         });
     }
@@ -167,28 +230,38 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
     {
         let state = state.clone();
         let da = drawing_area.clone();
+        let undo_btn2 = undo_btn.clone();
+        let redo_btn2 = redo_btn.clone();
+        let window = window.clone();
+        let filename = filename.clone();
         key_controller.connect_key_pressed(move |_ctrl, key, _code, mods| {
             let ctrl = mods.contains(gdk::ModifierType::CONTROL_MASK);
             let shift = mods.contains(gdk::ModifierType::SHIFT_MASK);
 
             if ctrl && key == gdk::Key::z && !shift {
-                // Undo
                 let mut st = state.borrow_mut();
                 if let Some(stroke) = st.annotations.pop() {
                     st.redo_stack.push(stroke);
                 }
+                let has_changes = !st.annotations.is_empty();
+                undo_btn2.set_sensitive(has_changes);
+                redo_btn2.set_sensitive(!st.redo_stack.is_empty());
                 drop(st);
+                update_title(&window, &filename, has_changes);
                 da.queue_draw();
                 return glib::Propagation::Stop;
             }
 
             if ctrl && (key == gdk::Key::Z || (key == gdk::Key::z && shift)) {
-                // Redo
                 let mut st = state.borrow_mut();
                 if let Some(stroke) = st.redo_stack.pop() {
                     st.annotations.push(stroke);
                 }
+                let has_changes = !st.annotations.is_empty();
+                undo_btn2.set_sensitive(has_changes);
+                redo_btn2.set_sensitive(!st.redo_stack.is_empty());
                 drop(st);
+                update_title(&window, &filename, has_changes);
                 da.queue_draw();
                 return glib::Propagation::Stop;
             }
@@ -206,7 +279,6 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
         &redo_btn,
         &copy_btn,
         &path_btn,
-        &save_btn,
     );
 
     // === "Копировать" button ===
@@ -236,19 +308,26 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
         });
     }
 
-    // === "Сохранить" button ===
+    // === Автосохранение при закрытии ===
     {
         let state = state.clone();
-        save_btn.connect_clicked(move |_btn| {
+        window.connect_close_request(move |_| {
             let st = state.borrow();
-            match render_final_surface(&st) {
-                Ok(final_surface) => {
-                    if let Err(e) = utils::save_surface_as_png(&final_surface, &st.file_path) {
-                        eprintln!("Failed to save: {e}");
+            if !st.annotations.is_empty() {
+                if let Ok(final_surface) = render_final_surface(&st) {
+                    let mut file = match std::fs::File::create(&st.file_path) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            eprintln!("Failed to save on close: {e}");
+                            return glib::Propagation::Proceed;
+                        }
+                    };
+                    if let Err(e) = final_surface.write_to_png(&mut file) {
+                        eprintln!("Failed to write PNG on close: {e}");
                     }
                 }
-                Err(e) => eprintln!("Failed to render: {e}"),
             }
+            glib::Propagation::Proceed
         });
     }
 
@@ -262,6 +341,14 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
 
     window.set_content(Some(&content));
     window.present();
+}
+
+fn update_title(window: &libadwaita::ApplicationWindow, filename: &str, has_changes: bool) {
+    if has_changes {
+        window.set_title(Some(&format!("{} •", filename)));
+    } else {
+        window.set_title(Some(filename));
+    }
 }
 
 fn screen_to_image(state: &EditorState, da: &gtk::DrawingArea, x: f64, y: f64) -> (f64, f64) {
@@ -306,7 +393,6 @@ fn build_bottom_bar(
     redo_btn: &gtk::Button,
     copy_btn: &gtk::Button,
     path_btn: &gtk::Button,
-    save_btn: &gtk::Button,
 ) -> gtk::Box {
     let bar = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -317,21 +403,33 @@ fn build_bottom_bar(
         .margin_bottom(8)
         .build();
 
+    // --- Переключатель инструментов ---
+    let brush_toggle = gtk::ToggleButton::with_label("Кисть");
+    let rect_toggle = gtk::ToggleButton::with_label("Прямоугольник");
+    rect_toggle.set_group(Some(&brush_toggle));
+    brush_toggle.set_active(true);
+
+    {
+        let state = state.clone();
+        brush_toggle.connect_clicked(move |_| {
+            state.borrow_mut().active_tool = ActiveTool::Brush;
+        });
+    }
+    {
+        let state = state.clone();
+        rect_toggle.connect_clicked(move |_| {
+            state.borrow_mut().active_tool = ActiveTool::Rect;
+        });
+    }
+
+    bar.append(&brush_toggle);
+    bar.append(&rect_toggle);
+
+    bar.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+
     let display = gdk::Display::default().expect("cannot get default display");
 
-    // CSS для цветовых кнопок: белая обводка при активном состоянии
-    let global_css = gtk::CssProvider::new();
-    global_css.load_from_string(
-        "button.snip-color:checked { outline: 2px solid white; outline-offset: 2px; }
-         button.snip-color { outline: none; }",
-    );
-    gtk::style_context_add_provider_for_display(
-        &display,
-        &global_css,
-        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-    );
-
-    // --- Цвета ---
+    // --- Выбор цвета (MenuButton + Popover) ---
     let colors: Vec<(&str, gdk::RGBA)> = vec![
         ("red", gdk::RGBA::new(1.0, 0.2, 0.2, 1.0)),
         ("green", gdk::RGBA::new(0.2, 0.8, 0.2, 1.0)),
@@ -340,22 +438,45 @@ fn build_bottom_bar(
         ("pink", gdk::RGBA::new(1.0, 0.4, 1.0, 1.0)),
     ];
 
-    let mut color_group: Option<gtk::ToggleButton> = None;
+    // Кнопка показывает текущий цвет
+    let color_btn = gtk::MenuButton::new();
+    color_btn.set_size_request(28, 28);
+    color_btn.add_css_class("snip-color-btn");
 
-    for (i, (name, rgba)) in colors.iter().enumerate() {
-        let btn = gtk::ToggleButton::new();
-        btn.set_size_request(28, 28);
-        btn.add_css_class("snip-color");
-        if i == 0 {
-            btn.set_active(true);
-            color_group = Some(btn.clone());
-        } else if let Some(ref group) = color_group {
-            btn.set_group(Some(group));
-        }
+    // CSS для кнопки текущего цвета (из сохранённого состояния)
+    let color_btn_css = gtk::CssProvider::new();
+    let current_color = state.borrow().brush.color;
+    color_btn_css.load_from_string(&format!(
+        "menubutton.snip-color-btn > button {{ background: rgba({},{},{},{}); border-radius: 4px; min-width: 28px; min-height: 28px; padding: 0; }}",
+        (current_color.red() * 255.0) as u8,
+        (current_color.green() * 255.0) as u8,
+        (current_color.blue() * 255.0) as u8,
+        current_color.alpha(),
+    ));
+    gtk::style_context_add_provider_for_display(
+        &display,
+        &color_btn_css,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
 
-        let css_class = format!("snip-color-{}", name);
+    // Popover с сеткой цветов
+    let popover = gtk::Popover::new();
+    let color_grid = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(6)
+        .margin_start(6)
+        .margin_end(6)
+        .margin_top(6)
+        .margin_bottom(6)
+        .build();
+
+    for (name, rgba) in &colors {
+        let btn = gtk::Button::new();
+        btn.set_size_request(32, 32);
+
+        let css_class = format!("snip-popover-color-{}", name);
         let css = format!(
-            "button.{} {{ background: rgba({},{},{},{}); border-radius: 4px; min-width: 28px; min-height: 28px; padding: 0; }}",
+            "button.{} {{ background: rgba({},{},{},{}); border-radius: 4px; min-width: 32px; min-height: 32px; padding: 0; }}",
             css_class,
             (rgba.red() * 255.0) as u8,
             (rgba.green() * 255.0) as u8,
@@ -373,35 +494,79 @@ fn build_bottom_bar(
 
         let color = *rgba;
         let state = state.clone();
+        let popover = popover.clone();
+        let color_btn_css = color_btn_css.clone();
         btn.connect_clicked(move |_| {
-            state.borrow_mut().brush.color = color;
+            let mut st = state.borrow_mut();
+            st.brush.color = color;
+            // Сохранить настройки
+            utils::save_brush_config(&utils::BrushConfig {
+                color: [color.red(), color.green(), color.blue(), color.alpha()],
+                width: st.brush.width,
+            });
+            drop(st);
+            // Обновить цвет кнопки
+            color_btn_css.load_from_string(&format!(
+                "menubutton.snip-color-btn > button {{ background: rgba({},{},{},{}); border-radius: 4px; min-width: 28px; min-height: 28px; padding: 0; }}",
+                (color.red() * 255.0) as u8,
+                (color.green() * 255.0) as u8,
+                (color.blue() * 255.0) as u8,
+                color.alpha(),
+            ));
+            popover.popdown();
         });
-        bar.append(&btn);
+        color_grid.append(&btn);
     }
+
+    popover.set_child(Some(&color_grid));
+    color_btn.set_popover(Some(&popover));
+    bar.append(&color_btn);
 
     bar.append(&gtk::Separator::new(gtk::Orientation::Vertical));
 
-    // --- Толщина ---
+    // --- Толщина (MenuButton + Popover) ---
     let widths: Vec<f64> = vec![2.0, 4.0, 8.0];
-    let mut width_group: Option<gtk::ToggleButton> = None;
+    let current_width = state.borrow().brush.width;
 
-    for (i, line_width) in widths.iter().enumerate() {
+    let width_btn = gtk::MenuButton::new();
+    width_btn.set_label(&format!("{}px", current_width as i32));
+
+    let width_popover = gtk::Popover::new();
+    let width_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(4)
+        .margin_start(6)
+        .margin_end(6)
+        .margin_top(6)
+        .margin_bottom(6)
+        .build();
+
+    for line_width in &widths {
         let label = format!("{}px", *line_width as i32);
-        let btn = gtk::ToggleButton::with_label(&label);
-        if i == 0 {
-            btn.set_active(true);
-            width_group = Some(btn.clone());
-        } else if let Some(ref group) = width_group {
-            btn.set_group(Some(group));
-        }
+        let btn = gtk::Button::with_label(&label);
 
         let w = *line_width;
         let state = state.clone();
+        let width_btn = width_btn.clone();
+        let width_popover = width_popover.clone();
         btn.connect_clicked(move |_| {
-            state.borrow_mut().brush.width = w;
+            let mut st = state.borrow_mut();
+            st.brush.width = w;
+            let color = st.brush.color;
+            utils::save_brush_config(&utils::BrushConfig {
+                color: [color.red(), color.green(), color.blue(), color.alpha()],
+                width: w,
+            });
+            drop(st);
+            width_btn.set_label(&format!("{}px", w as i32));
+            width_popover.popdown();
         });
-        bar.append(&btn);
+        width_box.append(&btn);
     }
+
+    width_popover.set_child(Some(&width_box));
+    width_btn.set_popover(Some(&width_popover));
+    bar.append(&width_btn);
 
     bar.append(&gtk::Separator::new(gtk::Orientation::Vertical));
 
@@ -417,7 +582,6 @@ fn build_bottom_bar(
     // --- Действия с файлом ---
     bar.append(copy_btn);
     bar.append(path_btn);
-    bar.append(save_btn);
 
     bar
 }
