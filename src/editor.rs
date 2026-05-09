@@ -89,6 +89,7 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
         .title(&filename)
         .default_width(img_w)
         .default_height(img_h + WINDOW_HEIGHT_PADDING)
+        .icon_name("dev.snip.app")
         .build();
 
     // === HeaderBar (минимальный — только title + close) ===
@@ -96,7 +97,7 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
 
     // Кнопки создаём здесь, компонуем в bottom bar
     let undo_btn = gtk::Button::builder().icon_name("edit-undo-symbolic").tooltip_text("Отменить (Ctrl+Z)").sensitive(false).build();
-    let redo_btn = gtk::Button::builder().icon_name("edit-redo-symbolic").tooltip_text("Повторить (Ctrl+Shift+Z)").sensitive(false).build();
+    let redo_btn = gtk::Button::builder().icon_name("edit-redo-symbolic").tooltip_text("Повторить (Ctrl+Y / Ctrl+Shift+Z)").sensitive(false).build();
     let copy_btn = gtk::Button::builder().label("Копировать").build();
     let path_btn = gtk::Button::builder().label("Путь").build();
 
@@ -240,8 +241,11 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
         });
     }
 
-    // === Keyboard shortcuts: Ctrl+Z (undo), Ctrl+Shift+Z (redo) ===
+    // === Keyboard shortcuts: Ctrl+Z (undo), Ctrl+Shift+Z / Ctrl+Y (redo) ===
+    // Capture-фаза: перехватываем клавиши на уровне окна до того, как они уйдут
+    // в сфокусированный виджет (toggle-кнопки иначе блокируют события).
     let key_controller = gtk::EventControllerKey::new();
+    key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
     {
         let state = state.clone();
         let da = drawing_area.clone();
@@ -253,12 +257,17 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
             let ctrl = mods.contains(gdk::ModifierType::CONTROL_MASK);
             let shift = mods.contains(gdk::ModifierType::SHIFT_MASK);
 
-            if ctrl && key == gdk::Key::z && !shift {
+            if ctrl && !shift && (key == gdk::Key::z || key == gdk::Key::Z) {
                 perform_undo(&state, &undo_btn2, &redo_btn2, &window, &filename, &da);
                 return glib::Propagation::Stop;
             }
 
-            if ctrl && (key == gdk::Key::Z || (key == gdk::Key::z && shift)) {
+            if ctrl && shift && (key == gdk::Key::z || key == gdk::Key::Z) {
+                perform_redo(&state, &undo_btn2, &redo_btn2, &window, &filename, &da);
+                return glib::Propagation::Stop;
+            }
+
+            if ctrl && !shift && (key == gdk::Key::y || key == gdk::Key::Y) {
                 perform_redo(&state, &undo_btn2, &redo_btn2, &window, &filename, &da);
                 return glib::Propagation::Stop;
             }
