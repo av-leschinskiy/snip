@@ -253,21 +253,28 @@ pub fn open_editor(app: &libadwaita::Application, path: PathBuf) {
         let redo_btn2 = redo_btn.clone();
         let window = window.clone();
         let filename = filename.clone();
-        key_controller.connect_key_pressed(move |_ctrl, key, _code, mods| {
+        key_controller.connect_key_pressed(move |_ctrl, _key, keycode, mods| {
             let ctrl = mods.contains(gdk::ModifierType::CONTROL_MASK);
             let shift = mods.contains(gdk::ModifierType::SHIFT_MASK);
 
-            if ctrl && !shift && (key == gdk::Key::z || key == gdk::Key::Z) {
+            // Используем hardware keycode вместо keyval: keyval зависит от
+            // раскладки ОС (при русской раскладке Z → «Я»), а keycode у
+            // физической клавиши не меняется. Значения — evdev/X11 keycodes
+            // стандартной QWERTY-клавиатуры.
+            const KEYCODE_Z: u32 = 52;
+            const KEYCODE_Y: u32 = 29;
+
+            if ctrl && !shift && keycode == KEYCODE_Z {
                 perform_undo(&state, &undo_btn2, &redo_btn2, &window, &filename, &da);
                 return glib::Propagation::Stop;
             }
 
-            if ctrl && shift && (key == gdk::Key::z || key == gdk::Key::Z) {
+            if ctrl && shift && keycode == KEYCODE_Z {
                 perform_redo(&state, &undo_btn2, &redo_btn2, &window, &filename, &da);
                 return glib::Propagation::Stop;
             }
 
-            if ctrl && !shift && (key == gdk::Key::y || key == gdk::Key::Y) {
+            if ctrl && !shift && keycode == KEYCODE_Y {
                 perform_redo(&state, &undo_btn2, &redo_btn2, &window, &filename, &da);
                 return glib::Propagation::Stop;
             }
